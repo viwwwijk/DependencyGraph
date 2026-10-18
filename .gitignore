@@ -1,0 +1,13 @@
+# Служебные файлы Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Виртуальное окружение
+venv/
+env/
+.venv/
+
+# Настройки редакторов
+.idea/
+.vscode/

@@ -1,80 +1,75 @@
 """Запуск приложения из командной строки.
 
-На этапе 2 приложение проверяет параметры, получает прямые
-зависимости заданной версии пакета и выводит их на экран. Ошибки
+На этапе 3 приложение строит граф зависимостей заданного пакета с
+учётом транзитивности (обход в ширину), исключает пакеты по
+подстроке фильтра, находит циклы и выводит граф на экран. Ошибки
 параметров завершают программу с кодом 2, ошибки получения данных —
 с кодом 1.
 """
 import sys
 
 from depviz.config import ConfigError, load_config
-from depviz.registry import DataError, remote_dependencies
-from depviz.testing_repo import file_dependencies
+from depviz.graph import build_graph, format_cycle
+from depviz.registry import DataError
+from depviz.sources import FileSource, RemoteSource
 from depviz.validators import LATEST_VERSION, MODE_TEST
 
 EXIT_OK = 0
 EXIT_DATA_ERROR = 1
 EXIT_CONFIG_ERROR = 2
 INDENT = "  "
+NO_DEPENDENCIES = "нет зависимостей"
 
 
-def describe_dependency(dependency):
-    """Вернуть строку о зависимости: имя, требование к версии, пометки."""
-    text = INDENT + dependency.name
-    if dependency.req:
-        text += " " + dependency.req
-    notes = []
-    if dependency.crate() != dependency.name:
-        notes.append("пакет " + dependency.package)
-    if dependency.kind != "normal":
-        notes.append(dependency.kind)
-    if dependency.optional:
-        notes.append("необязательная")
-    if dependency.target:
-        notes.append("платформа " + dependency.target)
-    if notes:
-        text += " (" + ", ".join(notes) + ")"
-    return text
+def describe_scope(config):
+    """Описание того, какие зависимости учитываются в графе."""
+    if config.mode == MODE_TEST:
+        return "Тестовый репозиторий: " + config.repo
+    return ("Репозиторий: " + config.repo + "\nУчитываются обычные и "
+            "build-зависимости, кроме необязательных (optional)")
 
 
-def format_dependencies(title, dependencies):
-    """Отформатировать заголовок и список прямых зависимостей."""
-    if not dependencies:
-        return title + "\nПрямые зависимости: нет"
-    lines = [title, "Прямые зависимости (" + str(len(dependencies)) + "):"]
-    lines.extend(describe_dependency(item) for item in dependencies)
+def format_graph(graph, config):
+    """Отформатировать граф: список смежности в порядке обхода и итоги."""
+    lines = ["Граф зависимостей: " + str(graph.root), describe_scope(config),
+             "Пакетов: " + str(len(graph.nodes)) + ", связей: "
+             + str(graph.edge_count()) + " (обход в ширину)"]
+    for package in graph.nodes:
+        children = graph.edges[package]
+        listed = ", ".join(str(child) for child in children) or NO_DEPENDENCIES
+        lines.append(INDENT + str(package) + " -> " + listed)
+    if config.filter:
+        excluded = ", ".join(graph.excluded) or "нет"
+        lines.append("Исключены фильтром «" + config.filter + "»: " + excluded)
+    lines.append(format_cycles(graph.cycles))
+    if graph.problems:
+        lines.append("Не удалось выбрать версию (" + str(len(graph.problems))
+                     + "):")
+        lines.extend(INDENT + problem for problem in graph.problems)
     return "\n".join(lines)
 
 
-def remote_report(config):
-    """Получить зависимости из репозитория по URL и вернуть отчёт."""
-    entry, dependencies = remote_dependencies(config.repo, config.package,
-                                              config.version)
-    title = "Пакет: " + config.package + " " + entry["vers"]
-    if config.version == LATEST_VERSION:
-        title += " (последняя версия)"
-    if entry.get("yanked"):
-        title += " (версия отозвана — yanked)"
-    title += "\nРепозиторий: " + config.repo
-    return format_dependencies(title, dependencies)
-
-
-def test_mode_report(config):
-    """Получить зависимости из файла тестового репозитория."""
-    dependencies = file_dependencies(config.repo, config.package)
-    title = ("Пакет: " + config.package + "\nТестовый репозиторий: "
-             + config.repo)
-    return format_dependencies(title, dependencies)
+def format_cycles(cycles):
+    """Строки о найденных циклических зависимостях."""
+    if not cycles:
+        return "Циклические зависимости: нет"
+    lines = ["Циклические зависимости (" + str(len(cycles)) + "):"]
+    lines.extend(INDENT + format_cycle(cycle) for cycle in cycles)
+    return "\n".join(lines)
 
 
 def build_report(config, stderr):
-    """Получить зависимости в выбранном режиме и вернуть отчёт."""
-    if config.mode != MODE_TEST:
-        return remote_report(config)
-    if config.version != LATEST_VERSION:
-        print("предупреждение: --version не используется в тестовом "
-              "режиме", file=stderr)
-    return test_mode_report(config)
+    """Построить граф в выбранном режиме и вернуть отчёт."""
+    if config.mode == MODE_TEST:
+        if config.version != LATEST_VERSION:
+            print("предупреждение: --version не используется в тестовом "
+                  "режиме", file=stderr)
+        source = FileSource(config.repo)
+    else:
+        source = RemoteSource(config.repo)
+    graph = build_graph(source, config.package, config.version,
+                        config.filter)
+    return format_graph(graph, config)
 
 
 def main(argv=None, stdout=None, stderr=None):

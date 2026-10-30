@@ -4,13 +4,12 @@ import os
 import unittest
 from unittest import mock
 
-from depviz.cli import (EXIT_CONFIG_ERROR, EXIT_DATA_ERROR, EXIT_OK,
-                        describe_dependency, main)
-from depviz.registry import DataError, Dependency
+from depviz.cli import EXIT_CONFIG_ERROR, EXIT_DATA_ERROR, EXIT_OK, main
+from depviz.graph import Graph, Package
+from depviz.registry import DataError
 
-EXAMPLE = os.path.join(os.path.dirname(__file__), os.pardir, "examples",
-                       "test_repo.txt")
-REMOTE = ["--package", "demo", "--repo", "https://index.example.org"]
+GRAPHS = os.path.join(os.path.dirname(__file__), os.pardir, "examples",
+                      "graphs")
 
 
 def run(argv):
@@ -21,90 +20,87 @@ def run(argv):
     return code, stdout.getvalue(), stderr.getvalue()
 
 
-class DescribeDependencyTest(unittest.TestCase):
-    """Проверка строки о зависимости."""
-
-    def test_plain(self):
-        """Обычная зависимость: имя и требование к версии."""
-        self.assertEqual(describe_dependency(Dependency("serde", "^1")),
-                         "  serde ^1")
-
-    def test_all_notes(self):
-        """Все пометки: переименование, вид, optional, платформа."""
-        dependency = Dependency("rand_old", "^0.7", "dev", True,
-                                "cfg(unix)", "rand")
-        self.assertEqual(describe_dependency(dependency),
-                         "  rand_old ^0.7 (пакет rand, dev, "
-                         "необязательная, платформа cfg(unix))")
-
-    def test_same_package_name(self):
-        """Пакет с тем же именем, что и зависимость, не помечается."""
-        dependency = Dependency("tokio", "^1", package="tokio")
-        self.assertEqual(describe_dependency(dependency), "  tokio ^1")
-
-    def test_test_mode(self):
-        """Без требования к версии выводится только имя."""
-        self.assertEqual(describe_dependency(Dependency("B", "")), "  B")
+def graph_args(name, package, *extra):
+    """Аргументы запуска в тестовом режиме с файлом из examples/graphs."""
+    return ["--mode", "test", "--repo", os.path.join(GRAPHS, name),
+            "--package", package] + list(extra)
 
 
 class MainTest(unittest.TestCase):
-    """Проверка запуска из командной строки."""
+    """Проверка вывода графа."""
 
-    @mock.patch("depviz.cli.remote_dependencies")
-    def test_remote(self, remote):
-        """Вывод прямых зависимостей последней версии пакета."""
-        remote.return_value = ({"vers": "1.2.0"},
-                               [Dependency("serde", "^1"),
-                                Dependency("cc", "^1", "build")])
-        code, out, err = run(REMOTE)
+    def test_graph_output(self):
+        """Список смежности в порядке обхода и итоги."""
+        code, out, err = run(graph_args("diamond.txt", "A"))
         self.assertEqual(code, EXIT_OK)
         self.assertEqual(err, "")
-        self.assertEqual(out, "\n".join([
-            "Пакет: demo 1.2.0 (последняя версия)",
-            "Репозиторий: https://index.example.org",
-            "Прямые зависимости (2):",
-            "  serde ^1",
-            "  cc ^1 (build)",
-        ]) + "\n")
-        remote.assert_called_once_with("https://index.example.org",
-                                       "demo", "latest")
+        lines = out.splitlines()
+        self.assertEqual(lines[0], "Граф зависимостей: A")
+        self.assertEqual(lines[2], "Пакетов: 5, связей: 5 (обход в ширину)")
+        self.assertEqual(lines[3:8], ["  A -> B, C", "  B -> D", "  C -> D",
+                                      "  D -> E",
+                                      "  E -> нет зависимостей"])
+        self.assertEqual(lines[-1], "Циклические зависимости: нет")
 
-    @mock.patch("depviz.cli.remote_dependencies")
-    def test_remote_yanked_without_dependencies(self, remote):
-        """Отозванная версия без зависимостей."""
-        remote.return_value = ({"vers": "0.1.0", "yanked": True}, [])
-        code, out, _ = run(REMOTE + ["--version", "0.1.0"])
-        self.assertEqual(code, EXIT_OK)
-        self.assertEqual(out, "Пакет: demo 0.1.0 (версия отозвана — "
-                              "yanked)\nРепозиторий: "
-                              "https://index.example.org\n"
-                              "Прямые зависимости: нет\n")
+    def test_cycles_and_filter(self):
+        """Вывод найденных циклов и исключённых фильтром пакетов."""
+        _, out, _ = run(graph_args("cycles.txt", "A", "--filter", "F"))
+        self.assertIn("Исключены фильтром «F»: F", out)
+        self.assertTrue(out.endswith("Циклические зависимости (2):\n"
+                                     "  A -> B -> C -> A\n"
+                                     "  D -> E -> D\n"))
 
-    @mock.patch("depviz.cli.remote_dependencies")
-    def test_data_error(self, remote):
-        """Ошибка получения данных: stderr и код 1."""
-        remote.side_effect = DataError("пакет не найден в репозитории")
-        code, out, err = run(REMOTE)
-        self.assertEqual(code, EXIT_DATA_ERROR)
-        self.assertEqual(out, "")
-        self.assertEqual(err, "ошибка: пакет не найден в репозитории\n")
+    def test_filter_without_matches(self):
+        """Если фильтр ничего не исключил, это видно в выводе."""
+        _, out, _ = run(graph_args("diamond.txt", "A", "--filter", "Z"))
+        self.assertIn("Исключены фильтром «Z»: нет", out)
 
-    def test_test_mode(self):
-        """Тестовый режим читает файл, версия не используется."""
-        code, out, err = run(["--package", "A", "--repo", EXAMPLE,
-                              "--mode", "test", "--version", "1.0.0"])
+    def test_version_warning(self):
+        """В тестовом режиме версия не используется."""
+        code, _, err = run(graph_args("diamond.txt", "A",
+                                      "--version", "1.0.0"))
         self.assertEqual(code, EXIT_OK)
         self.assertIn("не используется", err)
-        self.assertTrue(out.endswith("Прямые зависимости (2):\n  B\n"
-                                     "  C\n"))
+
+    def test_data_error(self):
+        """Неописанная зависимость: stderr и код 1."""
+        code, out, err = run(graph_args("missing.txt", "A"))
+        self.assertEqual(code, EXIT_DATA_ERROR)
+        self.assertEqual(out, "")
+        self.assertIn("не описан в тестовом репозитории", err)
+
+    @mock.patch("depviz.cli.RemoteSource")
+    @mock.patch("depviz.cli.build_graph")
+    def test_remote_mode(self, build, source):
+        """В режиме remote граф строится по индексу и выводятся проблемы."""
+        root = Package("demo", "1.0.0")
+        graph = Graph(root, [root], {root: []},
+                      problems=["old ^9: нет подходящей версии"])
+        build.return_value = graph
+        code, out, _ = run(["--package", "demo", "--repo",
+                            "https://index.example.org"])
+        self.assertEqual(code, EXIT_OK)
+        source.assert_called_once_with("https://index.example.org")
+        self.assertIn("Учитываются обычные и build-зависимости", out)
+        self.assertIn("  demo 1.0.0 -> нет зависимостей", out)
+        self.assertTrue(out.endswith("Не удалось выбрать версию (1):\n"
+                                     "  old ^9: нет подходящей версии\n"))
+
+    @mock.patch("depviz.cli.RemoteSource")
+    def test_remote_error(self, source):
+        """Ошибка индекса в режиме remote: код 1."""
+        source.side_effect = DataError("по адресу x нет индекса Cargo")
+        code, _, err = run(["--package", "demo", "--repo",
+                            "https://index.example.org"])
+        self.assertEqual(code, EXIT_DATA_ERROR)
+        self.assertEqual(err, "ошибка: по адресу x нет индекса Cargo\n")
 
     def test_config_error(self):
-        """Ошибки параметров: stderr, код 2, данные не загружаются."""
+        """Ошибки параметров: stderr, код 2."""
         code, out, err = run(["--package", "demo"])
         self.assertEqual(code, EXIT_CONFIG_ERROR)
         self.assertEqual(out, "")
-        self.assertEqual(err, "ошибка: --repo: обязательный параметр "
-                              "не задан\n")
+        self.assertIn("--repo: обязательный параметр не задан", err)
 
 
 if __name__ == "__main__":

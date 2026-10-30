@@ -1,0 +1,9 @@
+# Для фильтра по подстроке: с --filter TEST исключаются LOGTEST и
+# TESTKIT, а MOCK пропадает из графа, потому что нужен только им.
+APP: CORE LOGTEST UI
+CORE: UTIL
+LOGTEST: UTIL MOCK
+UI: CORE TESTKIT
+UTIL:
+MOCK:
+TESTKIT: MOCK

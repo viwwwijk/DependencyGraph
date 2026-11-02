@@ -5,7 +5,7 @@
 """
 from depviz.cfgexpr import can_be_enabled
 from depviz.graph import Package
-from depviz.registry import (ConnectionFailed, DataError, check_index,
+from depviz.registry import (ConnectionFailedError, DataError, check_index,
                              fetch_text, index_url, is_semver, make_dependency,
                              parse_index, select_version)
 from depviz.semver import version_key
@@ -84,7 +84,7 @@ class RemoteSource:
                           if is_semver(entry["vers"])
                           and not entry.get("yanked")
                           and matches(requirement, entry["vers"])]
-        except ConnectionFailed:
+        except ConnectionFailedError:
             raise
         except (DataError, RequirementError) as error:
             self.problems.append(name + " " + requirement + ": "

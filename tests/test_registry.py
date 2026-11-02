@@ -7,7 +7,7 @@ import threading
 import unittest
 from unittest import mock
 
-from depviz.registry import (ConnectionFailed, DataError, Dependency,
+from depviz.registry import (ConnectionFailedError, DataError, Dependency,
                              check_index, fetch_text, index_path,
                              make_dependency, parse_index,
                              remote_dependencies, select_version,
@@ -196,7 +196,7 @@ class CheckIndexTest(unittest.TestCase):
         """Ошибка соединения сообщается как есть."""
         def fail(url):
             """Имитировать недоступный сервер."""
-            raise ConnectionFailed("не удалось подключиться")
+            raise ConnectionFailedError("не удалось подключиться")
         with self.assertRaisesRegex(DataError, "не удалось подключиться"):
             check_index(REPO, fail)
 
@@ -258,7 +258,7 @@ class FetchTextTest(unittest.TestCase):
         server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
         port = server.server_port
         server.server_close()
-        with self.assertRaises(ConnectionFailed):
+        with self.assertRaises(ConnectionFailedError):
             fetch_text("http://127.0.0.1:" + str(port) + "/ok")
 
 

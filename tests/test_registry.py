@@ -204,8 +204,8 @@ class CheckIndexTest(unittest.TestCase):
 class Handler(http.server.BaseHTTPRequestHandler):
     """Локальный HTTP-сервер для проверки fetch_text."""
 
-    def do_GET(self):  # noqa: N802 (имя задано http.server)
-        """Ответить в зависимости от пути запроса."""
+    def do_get(self):
+        """Обработать GET-запрос (заглушка для тестов)."""
         codes = {"/ok": HTTPStatus.OK, "/missing": HTTPStatus.NOT_FOUND,
                  "/broken": HTTPStatus.INTERNAL_SERVER_ERROR}
         code = codes.get(self.path, HTTPStatus.NOT_FOUND)
@@ -214,9 +214,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body.encode("utf-8"))
 
+    # http.server ожидает метод именно с именем do_GET
+    do_GET = do_get
+
     def log_message(self, *args):
         """Не печатать журнал запросов."""
-
 
 class FetchTextTest(unittest.TestCase):
     """Проверка загрузки по HTTP на локальном сервере."""

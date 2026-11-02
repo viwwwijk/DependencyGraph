@@ -55,6 +55,38 @@ class MainTest(unittest.TestCase):
         _, out, _ = run(graph_args("diamond.txt", "A", "--filter", "Z"))
         self.assertIn("Исключены фильтром «Z»: нет", out)
 
+    def test_load_order(self):
+        """Режим --load-order выводит нумерованный порядок загрузки."""
+        code, out, _ = run(graph_args("layers.txt", "A", "--load-order"))
+        self.assertEqual(code, EXIT_OK)
+        lines = out.splitlines()
+        self.assertEqual(lines[0], "Порядок загрузки: A")
+        self.assertEqual(lines[3:10], ["  1. F", "  2. G", "  3. E",
+                                       "  4. D", "  5. B", "  6. C",
+                                       "  7. A"])
+        self.assertNotIn("->", lines[3])
+
+    def test_load_order_with_cycle(self):
+        """Пакеты, упирающиеся в цикл, перечисляются отдельно."""
+        _, out, _ = run(graph_args("partial_cycle.txt", "A",
+                                   "--load-order"))
+        self.assertIn("  3. B", out)
+        self.assertIn("Нельзя загрузить из-за циклических зависимостей "
+                      "(3): A, C, E", out)
+        self.assertIn("  C -> E -> C", out)
+
+    def test_load_order_nothing_loadable(self):
+        """Если загрузить нельзя ничего, это сообщается явно."""
+        _, out, _ = run(graph_args("cycles.txt", "A", "--load-order"))
+        self.assertIn("нет пакетов, которые можно загрузить", out)
+
+    def test_load_order_filter(self):
+        """Исключённые фильтром пакеты не попадают в порядок загрузки."""
+        _, out, _ = run(graph_args("filter.txt", "APP", "--load-order",
+                                   "--filter", "TEST"))
+        self.assertNotIn("TESTKIT", out.split("Исключены")[0])
+        self.assertIn("Исключены фильтром «TEST»: LOGTEST, TESTKIT", out)
+
     def test_version_warning(self):
         """В тестовом режиме версия не используется."""
         code, _, err = run(graph_args("diamond.txt", "A",

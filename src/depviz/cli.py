@@ -2,7 +2,9 @@
 
 На этапе 3 приложение строит граф зависимостей заданного пакета с
 учётом транзитивности (обход в ширину), исключает пакеты по
-подстроке фильтра, находит циклы и выводит граф на экран. Ошибки
+подстроке фильтра, находит циклы и выводит граф на экран. На этапе 4
+добавлен режим --load-order: вместо графа выводится порядок загрузки
+зависимостей. Ошибки
 параметров завершают программу с кодом 2, ошибки получения данных —
 с кодом 1.
 """
@@ -10,6 +12,7 @@ import sys
 
 from depviz.config import ConfigError, load_config
 from depviz.graph import build_graph, format_cycle
+from depviz.loadorder import load_order
 from depviz.registry import DataError
 from depviz.sources import FileSource, RemoteSource
 from depviz.validators import LATEST_VERSION, MODE_TEST
@@ -42,10 +45,7 @@ def format_graph(graph, config):
         excluded = ", ".join(graph.excluded) or "нет"
         lines.append("Исключены фильтром «" + config.filter + "»: " + excluded)
     lines.append(format_cycles(graph.cycles))
-    if graph.problems:
-        lines.append("Не удалось выбрать версию (" + str(len(graph.problems))
-                     + "):")
-        lines.extend(INDENT + problem for problem in graph.problems)
+    lines.extend(format_problems(graph.problems))
     return "\n".join(lines)
 
 
@@ -56,6 +56,36 @@ def format_cycles(cycles):
     lines = ["Циклические зависимости (" + str(len(cycles)) + "):"]
     lines.extend(INDENT + format_cycle(cycle) for cycle in cycles)
     return "\n".join(lines)
+
+
+def format_load_order(graph, config):
+    """Отформатировать порядок загрузки зависимостей (этап 4)."""
+    result = load_order(graph)
+    lines = ["Порядок загрузки: " + str(graph.root), describe_scope(config),
+             "Пакетов: " + str(len(graph.nodes)) + " (каждый пакет "
+             "загружается после всех своих зависимостей)"]
+    for number, package in enumerate(result.order, 1):
+        lines.append(INDENT + str(number) + ". " + str(package))
+    if not result.order:
+        lines.append(INDENT + "нет пакетов, которые можно загрузить")
+    if config.filter:
+        excluded = ", ".join(graph.excluded) or "нет"
+        lines.append("Исключены фильтром «" + config.filter + "»: " + excluded)
+    if result.blocked:
+        lines.append("Нельзя загрузить из-за циклических зависимостей ("
+                     + str(len(result.blocked)) + "): "
+                     + ", ".join(str(item) for item in result.blocked))
+    lines.append(format_cycles(graph.cycles))
+    lines.extend(format_problems(graph.problems))
+    return "\n".join(lines)
+
+
+def format_problems(problems):
+    """Строки о зависимостях, для которых не удалось выбрать версию."""
+    if not problems:
+        return []
+    return (["Не удалось выбрать версию (" + str(len(problems)) + "):"]
+            + [INDENT + problem for problem in problems])
 
 
 def build_report(config, stderr):
@@ -69,11 +99,16 @@ def build_report(config, stderr):
         source = RemoteSource(config.repo)
     graph = build_graph(source, config.package, config.version,
                         config.filter)
+    if config.load_order:
+        return format_load_order(graph, config)
     return format_graph(graph, config)
 
 
 def main(argv=None, stdout=None, stderr=None):
-    """Разобрать параметры, вывести прямые зависимости, вернуть код."""
+    """Разобрать параметры, вывести граф или порядок загрузки.
+
+    Возвращает код завершения.
+    """
     stdout = stdout or sys.stdout
     stderr = stderr or sys.stderr
     try:

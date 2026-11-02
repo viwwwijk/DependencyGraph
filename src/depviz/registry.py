@@ -40,7 +40,7 @@ class DataError(Exception):
     """Ошибка получения или разбора данных о зависимостях."""
 
 
-class ConnectionFailed(DataError):
+class ConnectionFailedError(DataError):
     """Не удалось связаться с сервером репозитория."""
 
 
@@ -95,8 +95,8 @@ def fetch_text(url):
                         + " для " + url)
     except (urllib.error.URLError, socket.timeout, OSError) as error:
         reason = getattr(error, "reason", error)
-        raise ConnectionFailed("не удалось подключиться к репозиторию: "
-                               + str(reason))
+        raise ConnectionFailedError(
+            "не удалось подключиться к репозиторию: " + str(reason))
     except UnicodeDecodeError:
         raise DataError("ответ репозитория не в кодировке UTF-8: " + url)
 
@@ -107,7 +107,7 @@ def check_index(repo, fetch=None):
     url = repo.rstrip("/") + "/" + INDEX_CONFIG
     try:
         config = json.loads(fetch(url))
-    except ConnectionFailed:
+    except ConnectionFailedError:
         raise
     except (DataError, json.JSONDecodeError):
         raise DataError("по адресу " + repo + " нет индекса Cargo; "

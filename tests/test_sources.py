@@ -4,7 +4,7 @@ import os
 import unittest
 
 from depviz.graph import Package, build_graph
-from depviz.registry import ConnectionFailed, DataError, index_path
+from depviz.registry import ConnectionFailedError, DataError, index_path
 from depviz.sources import FileSource, RemoteSource
 
 REPO = "https://index.example.org"
@@ -92,9 +92,9 @@ class RemoteSourceTest(unittest.TestCase):
         """Ошибка подключения прерывает построение графа."""
         def broken(url):
             """Имитировать обрыв связи после проверки индекса."""
-            raise ConnectionFailed("не удалось подключиться")
+            raise ConnectionFailedError("не удалось подключиться")
         self.source.fetch = broken
-        with self.assertRaises(ConnectionFailed):
+        with self.assertRaises(ConnectionFailedError):
             self.source.resolve("other", "^1")
 
     def test_graph_and_cache(self):

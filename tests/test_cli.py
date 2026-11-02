@@ -1,12 +1,16 @@
 """Модульные тесты для depviz.cli."""
 import io
 import os
+import shutil
+import tempfile
 import unittest
 from unittest import mock
 
-from depviz.cli import EXIT_CONFIG_ERROR, EXIT_DATA_ERROR, EXIT_OK, main
+from depviz.cli import (EXIT_CONFIG_ERROR, EXIT_DATA_ERROR, EXIT_OK,
+                        EXIT_RENDER_ERROR, main)
 from depviz.graph import Graph, Package
 from depviz.registry import DataError
+from depviz.render import RenderError
 
 GRAPHS = os.path.join(os.path.dirname(__file__), os.pardir, "examples",
                       "graphs")
@@ -27,65 +31,49 @@ def graph_args(name, package, *extra):
 
 
 class MainTest(unittest.TestCase):
-    """Проверка вывода графа."""
+    """Проверка вывода графа на языке DOT и сохранения изображения."""
 
-    def test_graph_output(self):
-        """Список смежности в порядке обхода и итоги."""
+    def setUp(self):
+        """Подменить рисование: тесты не зависят от Graphviz."""
+        patcher = mock.patch("depviz.cli.render_svg")
+        self.render = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_dot_output(self):
+        """В stdout — текст DOT, в stderr — сообщение о файле."""
         code, out, err = run(graph_args("diamond.txt", "A"))
         self.assertEqual(code, EXIT_OK)
-        self.assertEqual(err, "")
-        lines = out.splitlines()
-        self.assertEqual(lines[0], "Граф зависимостей: A")
-        self.assertEqual(lines[2], "Пакетов: 5, связей: 5 (обход в ширину)")
-        self.assertEqual(lines[3:8], ["  A -> B, C", "  B -> D", "  C -> D",
-                                      "  D -> E",
-                                      "  E -> нет зависимостей"])
-        self.assertEqual(lines[-1], "Циклические зависимости: нет")
+        self.assertTrue(out.startswith("// Граф зависимостей: A\n"))
+        self.assertIn("digraph dependencies {", out)
+        for edge in ('"A" -> "B"', '"A" -> "C"', '"B" -> "D"',
+                     '"C" -> "D"', '"D" -> "E"'):
+            self.assertIn(edge, out)
+        self.assertEqual(err, "Изображение графа сохранено в файл "
+                         "graph.svg (пакетов: 5, связей: 5, циклов: 0)\n")
+
+    def test_image_saved(self):
+        """Изображение сохраняется в файл --output по тому же тексту."""
+        code, out, _ = run(graph_args("diamond.txt", "A", "--output",
+                                      "diamond.svg"))
+        self.assertEqual(code, EXIT_OK)
+        self.render.assert_called_once_with(out, "diamond.svg")
 
     def test_cycles_and_filter(self):
-        """Вывод найденных циклов и исключённых фильтром пакетов."""
-        _, out, _ = run(graph_args("cycles.txt", "A", "--filter", "F"))
-        self.assertIn("Исключены фильтром «F»: F", out)
-        self.assertTrue(out.endswith("Циклические зависимости (2):\n"
-                                     "  A -> B -> C -> A\n"
-                                     "  D -> E -> D\n"))
+        """Циклы и исключённые фильтром пакеты попадают в DOT."""
+        _, out, err = run(graph_args("cycles.txt", "A", "--filter", "F"))
+        self.assertIn("// Исключены фильтром «F»: F", out)
+        self.assertIn("//     A -> B -> C -> A", out)
+        self.assertIn('"C" -> "A" [color="#d62728", penwidth=2]', out)
+        self.assertNotIn('"F"', out)
+        self.assertIn("циклов: 2", err)
 
-    def test_filter_without_matches(self):
-        """Если фильтр ничего не исключил, это видно в выводе."""
-        _, out, _ = run(graph_args("diamond.txt", "A", "--filter", "Z"))
-        self.assertIn("Исключены фильтром «Z»: нет", out)
-
-    def test_load_order(self):
-        """Режим --load-order выводит нумерованный порядок загрузки."""
-        code, out, _ = run(graph_args("layers.txt", "A", "--load-order"))
-        self.assertEqual(code, EXIT_OK)
-        lines = out.splitlines()
-        self.assertEqual(lines[0], "Порядок загрузки: A")
-        self.assertEqual(lines[3:10], ["  1. F", "  2. G", "  3. E",
-                                       "  4. D", "  5. B", "  6. C",
-                                       "  7. A"])
-        self.assertNotIn("->", lines[3])
-
-    def test_load_order_with_cycle(self):
-        """Пакеты, упирающиеся в цикл, перечисляются отдельно."""
-        _, out, _ = run(graph_args("partial_cycle.txt", "A",
-                                   "--load-order"))
-        self.assertIn("  3. B", out)
-        self.assertIn("Нельзя загрузить из-за циклических зависимостей "
-                      "(3): A, C, E", out)
-        self.assertIn("  C -> E -> C", out)
-
-    def test_load_order_nothing_loadable(self):
-        """Если загрузить нельзя ничего, это сообщается явно."""
-        _, out, _ = run(graph_args("cycles.txt", "A", "--load-order"))
-        self.assertIn("нет пакетов, которые можно загрузить", out)
-
-    def test_load_order_filter(self):
-        """Исключённые фильтром пакеты не попадают в порядок загрузки."""
-        _, out, _ = run(graph_args("filter.txt", "APP", "--load-order",
-                                   "--filter", "TEST"))
-        self.assertNotIn("TESTKIT", out.split("Исключены")[0])
-        self.assertIn("Исключены фильтром «TEST»: LOGTEST, TESTKIT", out)
+    def test_render_error(self):
+        """Если изображение сохранить нельзя, код 3, но DOT выведен."""
+        self.render.side_effect = RenderError("не найдена программа dot")
+        code, out, err = run(graph_args("diamond.txt", "A"))
+        self.assertEqual(code, EXIT_RENDER_ERROR)
+        self.assertIn("digraph", out)
+        self.assertEqual(err, "ошибка: не найдена программа dot\n")
 
     def test_version_warning(self):
         """В тестовом режиме версия не используется."""
@@ -113,10 +101,9 @@ class MainTest(unittest.TestCase):
                             "https://index.example.org"])
         self.assertEqual(code, EXIT_OK)
         source.assert_called_once_with("https://index.example.org")
-        self.assertIn("Учитываются обычные и build-зависимости", out)
-        self.assertIn("  demo 1.0.0 -> нет зависимостей", out)
-        self.assertTrue(out.endswith("Не удалось выбрать версию (1):\n"
-                                     "  old ^9: нет подходящей версии\n"))
+        self.assertIn("// Учитываются обычные и build-зависимости", out)
+        self.assertIn('"demo 1.0.0" [label="demo\\n1.0.0"', out)
+        self.assertIn("//     old ^9: нет подходящей версии", out)
 
     @mock.patch("depviz.cli.RemoteSource")
     def test_remote_error(self, source):
@@ -133,6 +120,23 @@ class MainTest(unittest.TestCase):
         self.assertEqual(code, EXIT_CONFIG_ERROR)
         self.assertEqual(out, "")
         self.assertIn("--repo: обязательный параметр не задан", err)
+
+
+@unittest.skipUnless(shutil.which("dot"), "Graphviz не установлен")
+class GraphvizTest(unittest.TestCase):
+    """Полный запуск с настоящим Graphviz."""
+
+    def test_svg_created(self):
+        """Файл SVG создаётся и содержит пакеты графа."""
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "layers.svg")
+            code, _, _ = run(graph_args("layers.txt", "A", "--output",
+                                        path))
+            with open(path, encoding="utf-8") as file:
+                svg = file.read()
+        self.assertEqual(code, EXIT_OK)
+        self.assertIn("<svg", svg)
+        self.assertIn("Зависимости пакета A", svg)
 
 
 if __name__ == "__main__":

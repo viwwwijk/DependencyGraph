@@ -46,7 +46,6 @@ class Config:
     version: str
     output: str
     filter: str
-    load_order: bool = False
 
     def items(self):
         """Вернуть пары (ключ, значение) в порядке вывода."""
@@ -57,7 +56,6 @@ class Config:
             ("version", self.version),
             ("output", self.output),
             ("filter", self.filter),
-            ("load-order", "да" if self.load_order else "нет"),
         ]
 
 
@@ -106,9 +104,6 @@ def build_parser():
     parser.add_argument(
         "--filter", default=None,
         help="не учитывать пакеты, имя которых содержит эту подстроку")
-    parser.add_argument(
-        "--load-order", action="store_true",
-        help="вывести порядок загрузки зависимостей вместо графа")
     return parser
 
 
@@ -148,4 +143,4 @@ def load_config(argv):
     if errors:
         raise ConfigError(errors)
     return Config(args.package, args.repo, args.mode, args.version,
-                  args.output, args.filter or "", args.load_order)
+                  args.output, args.filter or "")

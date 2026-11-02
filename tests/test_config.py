@@ -22,7 +22,19 @@ class LoadConfigTest(unittest.TestCase):
             ("version", "latest"),
             ("output", "graph.svg"),
             ("filter", ""),
+            ("load-order", "нет"),
         ])
+        self.assertFalse(config.load_order)
+
+    def test_load_order_flag(self):
+        """Флаг --load-order включает режим порядка загрузки."""
+        config = load_config(REMOTE_ARGS + ["--load-order"])
+        self.assertTrue(config.load_order)
+
+    def test_load_order_takes_no_value(self):
+        """У --load-order нет значения: лишний аргумент — ошибка."""
+        with self.assertRaises(ConfigError):
+            load_config(REMOTE_ARGS + ["--load-order", "yes"])
 
     def test_all_options_test_mode(self):
         """Все опции вместе в тестовом режиме."""

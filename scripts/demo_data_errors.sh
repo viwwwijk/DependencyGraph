@@ -16,6 +16,7 @@ run() {
     echo
 }
 URL=https://index.crates.io
+mkdir -p out
 echo "## Пакета нет в репозитории"
 run --package nosuchcrate-xyz-123 --repo "$URL"
 echo "## Версии нет у пакета"
@@ -29,4 +30,4 @@ run --package Z --repo examples/test_repo.txt --mode test
 echo "## Ошибка в файле тестового репозитория"
 run --package A --repo examples/broken_test_repo.txt --mode test
 echo "## Предупреждение: версия в тестовом режиме не используется"
-run --package A --repo examples/test_repo.txt --mode test --version 1.0.0
+run --package A --repo examples/test_repo.txt --mode test --version 1.0.0 --output out/test_repo.svg

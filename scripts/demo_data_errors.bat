@@ -3,6 +3,7 @@ chcp 65001 >nul
 rem Этап 2: ошибки получения данных о зависимостях (код завершения 1).
 cd /d "%~dp0.."
 set URL=https://index.crates.io
+if not exist out mkdir out
 echo ## Пакета нет в репозитории
 call :run --package nosuchcrate-xyz-123 --repo %URL%
 echo ## Версии нет у пакета
@@ -16,7 +17,7 @@ call :run --package Z --repo examples\test_repo.txt --mode test
 echo ## Ошибка в файле тестового репозитория
 call :run --package A --repo examples\broken_test_repo.txt --mode test
 echo ## Предупреждение: версия в тестовом режиме не используется
-call :run --package A --repo examples\test_repo.txt --mode test --version 1.0.0
+call :run --package A --repo examples\test_repo.txt --mode test --version 1.0.0 --output out\test_repo.svg
 exit /b 0
 
 :run
